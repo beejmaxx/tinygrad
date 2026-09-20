@@ -15,7 +15,9 @@ if TYPE_CHECKING:
 
 # **************** Device ****************
 
-HCQ_RUNTIME_DEV = ContextVar("HCQ_RUNTIME_DEV", "PYTHON" if DEV.interface.startswith("MOCK") else "CPU")
+# QCOM submits ioctls through C calls, which require a compiled host runtime even when the GPU is mocked.
+HCQ_RUNTIME_DEV = ContextVar("HCQ_RUNTIME_DEV", "PYTHON" if DEV.interface.startswith("MOCK") and
+                             not any(t.interface.startswith("MOCK") and t.device == "QCOM" for t in DEV.value) else "CPU")
 
 ALL_DEVICES = ["METAL", "AMD", "NV", "CUDA", "QCOM", "CL", "CPU", "DSP", "WEBGPU"]
 class _Device:

@@ -7,9 +7,36 @@ from test.mockgpu.amd.amddriver import AMDDriver
 from test.mockgpu.am.amdriver import AMDriver, AMUSBDriver
 start = time.perf_counter()
 
-drivers = [cls() for t in DEV.value if (cls:={"MOCKPCI+AMD": AMDriver, "MOCKKFD+AMD": AMDDriver, "MOCK+AMD": AMDDriver, "MOCKUSB+AMD": AMUSBDriver,
-                                              "MOCK+NV": NVDriver}.get(f"{t.interface}+{t.device}"))]
+drivers, qcom_active = [], False
+for target in DEV.value:
+  key = f"{target.interface}+{target.device}"
+  if key == "MOCK+QCOM":
+    # QCOM's instruction decoder depends on the optional Mesa package; keep that dependency out of other MockGPU backends.
+    from test.mockgpu.qcom.qcomdriver import QCOMDriver
+    qcom_active = True
+    drivers.append(QCOMDriver())
+  elif (driver_cls:={"MOCKPCI+AMD": AMDriver, "MOCKKFD+AMD": AMDDriver, "MOCK+AMD": AMDDriver, "MOCKUSB+AMD": AMUSBDriver,
+                    "MOCK+NV": NVDriver}.get(key)) is not None: drivers.append(driver_cls())
 tracked_fds: dict[int, typing.Any] = {}
+
+# Compiled HCQ submissions call libc through a function pointer, outside FileIOInterface.ioctl.
+# Route those calls through the same virtual descriptors, and retain failures for the next synchronization.
+original_ioctl = libc.dll.ioctl
+@ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p)
+def mock_ioctl(fd, request, pointer):
+  if (descriptor:=tracked_fds.get(fd)) is None:
+    return original_ioctl(ctypes.c_int(fd), ctypes.c_ulong(request), ctypes.c_void_p(pointer))
+  try:
+    descriptor.raise_if_failed()
+    return descriptor.ioctl(fd, request, pointer)
+  except Exception as error:
+    descriptor.error = error
+    return -1
+setattr(mock_ioctl, '__name__', original_ioctl.__name__)
+setattr(mock_ioctl, '__module__', original_ioctl.__module__)
+if qcom_active:
+  original_ioctl.argtypes = [ctypes.c_int, ctypes.c_ulong]  # fixed prefix of the variadic ABI, required on Apple arm64
+  setattr(libc.dll, 'ioctl', mock_ioctl)
 
 original_memoryview = builtins.memoryview
 class TrackedMemoryView:
@@ -67,6 +94,7 @@ class MockFileIOInterface(FileIOInterface):
 
   def ioctl(self, request, arg):
     if self.fd in tracked_fds:
+      tracked_fds[self.fd].raise_if_failed()
       return tracked_fds[self.fd].ioctl(self.fd, request, ctypes.addressof(arg))
     return fcntl.ioctl(self.fd, request, arg)
 
