@@ -114,11 +114,13 @@ class TestA630CommandPackets(unittest.TestCase):
     gpu.state_blocks[mesa.SB6_CS_TEX,mesa.ST_SHADER,0] = (3 << 5 | 3 << 8 | 3 << 11, 0x30, 0, 0)
     with self.assertRaisesRegex(ValueError, 'border color'): gpu.samplers(Memory(((pointer, 4*64), (border, 4096))), 1)
 
+  @unittest.skipUnless('mesa' in mesa.dll._loaded_, 'requires the optional Mesa package')
   def test_instruction_cannot_select_reserved_sampler(self):
     program = struct.pack('<Q', 0xa0001f0000800001)  # isam with direct texture 0 and sampler 4.
     with self.assertRaisesRegex(ValueError, 'unavailable sampler'):
       QCOMGPU.validate_image_accesses(program, 1, 0, frozenset({0}))
 
+  @unittest.skipUnless('mesa' in mesa.dll._loaded_, 'requires the optional Mesa package')
   def test_indirect_texture_selection_fails_closed(self):
     program = struct.pack('<Q', 0xa0081f0000800001)  # isam.s2en selects texture/sampler through registers.
     with self.assertRaisesRegex(ValueError, 'addressing mode'):
@@ -139,6 +141,7 @@ class TestA630CommandPackets(unittest.TestCase):
     with self.assertRaisesRegex(ValueError, 'outside the GPR files'):
       gpu.execute((1, 1, 1), Memory(()))
 
+  @unittest.skipUnless('mesa' in mesa.dll._loaded_, 'requires the optional Mesa package')
   def test_uniform_launch_metadata_crosses_shared_boundary(self):
     def config(wgsz:int): return 0xfc | wgsz << 8 | 0xfc << 16 | 0xfc << 24
     program = ctypes.c_uint64(0x0300000000000000)
