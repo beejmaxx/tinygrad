@@ -19,22 +19,22 @@ for target in DEV.value:
                     "MOCK+NV": NVDriver}.get(key)) is not None: drivers.append(driver_cls())
 tracked_fds: dict[int, typing.Any] = {}
 
-# Compiled HCQ submissions call libc through a function pointer, outside FileIOInterface.ioctl.
-# Route those calls through the same virtual descriptors, and retain failures for the next synchronization.
-original_ioctl = libc.dll.ioctl
-@ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p)
-def mock_ioctl(fd, request, pointer):
-  if (descriptor:=tracked_fds.get(fd)) is None:
-    return original_ioctl(ctypes.c_int(fd), ctypes.c_ulong(request), ctypes.c_void_p(pointer))
-  try:
-    descriptor.raise_if_failed()
-    return descriptor.ioctl(fd, request, pointer)
-  except Exception as error:
-    descriptor.error = error
-    return -1
-setattr(mock_ioctl, '__name__', original_ioctl.__name__)
-setattr(mock_ioctl, '__module__', original_ioctl.__module__)
 if qcom_active:
+  # Compiled HCQ submissions call libc through a function pointer, outside FileIOInterface.ioctl.
+  # Route those calls through the same virtual descriptors, and retain failures for the next synchronization.
+  original_ioctl = libc.dll.ioctl
+  @ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p)
+  def mock_ioctl(fd, request, pointer):
+    if (descriptor:=tracked_fds.get(fd)) is None:
+      return original_ioctl(ctypes.c_int(fd), ctypes.c_ulong(request), ctypes.c_void_p(pointer))
+    try:
+      descriptor.raise_if_failed()
+      return descriptor.ioctl(fd, request, pointer)
+    except Exception as error:
+      descriptor.error = error
+      return -1
+  setattr(mock_ioctl, '__name__', original_ioctl.__name__)
+  setattr(mock_ioctl, '__module__', original_ioctl.__module__)
   original_ioctl.argtypes = [ctypes.c_int, ctypes.c_ulong]  # fixed prefix of the variadic ABI, required on Apple arm64
   setattr(libc.dll, 'ioctl', mock_ioctl)
 
